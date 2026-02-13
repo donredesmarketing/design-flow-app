@@ -7,7 +7,7 @@ import {
 
 // --- CONFIGURACIÓN ---
 // Cambia esto por la URL real de tu archivo PHP en Hostinger
-const EMAIL_API_URL = "https://tudominio.com/send_email.php"; 
+const EMAIL_API_URL = import.meta.env.VITE_EMAIL_API_URL;
 
 const MOCK_DESIGNS = [
   {
