@@ -21,7 +21,7 @@ const MOCK_DESIGNS = [
     fileName: "logo_v1.png",
     fileSize: 12.5,
     clientEmail: "cliente@tech.com",
-    isArchived: false,
+    isArchived: true,
     driveLinked: true
   }
 ];
