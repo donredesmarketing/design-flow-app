@@ -334,3 +334,4 @@ export default function App() {
                         {activeFeedbackId === design.id ? (
                           <div>
                             <textarea></textarea>
+                          </div>div>
