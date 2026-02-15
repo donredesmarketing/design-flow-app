@@ -333,4 +333,4 @@ export default function App() {
                       <div className="mt-auto space-y-4">
                         {activeFeedbackId === design.id ? (
                           <div>
-                            <textarea
+                            <textarea></textarea>
