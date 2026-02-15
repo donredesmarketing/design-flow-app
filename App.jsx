@@ -1,3 +1,4 @@
+
 import React, { useState, useMemo } from 'react';
 import {
   Upload, CheckCircle, XCircle, MessageSquare, Image as ImageIcon,
@@ -333,5 +334,113 @@ export default function App() {
                       <div className="mt-auto space-y-4">
                         {activeFeedbackId === design.id ? (
                           <div>
-                            <textarea></textarea>
-                          </div>div>
+                            <textarea
+                              className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
+                              placeholder="Razón..."
+                              rows={3}
+                              value={feedbackText}
+                              onChange={(e) => setFeedbackText(e.target.value)}
+                            />
+                            <div className="flex gap-2 mt-2">
+                              <button
+                                onClick={() => handleUpdateStatus(design.id, 'rejected')}
+                                className="flex-1 bg-red-500 text-white py-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2"
+                              >
+                                <XCircle size={14} /> Rechazar
+                              </button>
+                              <button
+                                onClick={() => setActiveFeedbackId(null)}
+                                className="px-4 py-3 bg-slate-100 text-slate-400 rounded-xl font-bold text-xs"
+                              >
+                                Cancelar
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex gap-3 pt-4 border-t border-slate-100">
+                            <button
+                              onClick={() => { setFeedbackText("Aprobado"); handleUpdateStatus(design.id, 'approved'); }}
+                              className="flex-1 bg-green-500 text-white py-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 hover:bg-green-600 transition-all shadow-lg shadow-green-100"
+                            >
+                              <CheckCircle size={16} /> Aprobar
+                            </button>
+                            <button
+                              onClick={() => setActiveFeedbackId(design.id)}
+                              className="flex-1 bg-white border-2 border-slate-200 text-slate-600 py-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 hover:border-red-200 hover:text-red-500 transition-all"
+                            >
+                              <MessageSquare size={16} /> Cambios
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {isUploadModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-md z-50 flex items-center justify-center p-6">
+          <div className="bg-white rounded-[3rem] shadow-2xl w-full max-w-xl overflow-hidden">
+            <div className="p-10 bg-slate-50 border-b border-slate-100 flex justify-between items-center">
+              <h2 className="text-3xl font-black text-slate-900 tracking-tight">Nueva Entrega</h2>
+              <button onClick={() => setIsUploadModalOpen(false)} className="bg-white p-3 rounded-full shadow-md text-slate-400 hover:text-red-500">
+                <XCircle size={28} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmitDesign} className="p-10 space-y-8 max-h-[70vh] overflow-y-auto">
+              <div className="grid grid-cols-2 gap-6">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-1">Email Cliente</label>
+                  <input
+                    required
+                    type="email"
+                    className="w-full px-5 py-4 bg-slate-50 rounded-2xl outline-none focus:ring-4 focus:ring-indigo-100"
+                    placeholder="cliente@ejemplo.com"
+                    value={newDesign.clientEmail}
+                    onChange={(e) => setNewDesign({ ...newDesign, clientEmail: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-1">Proyecto</label>
+                  <input
+                    required
+                    className="w-full px-5 py-4 bg-slate-50 rounded-2xl outline-none focus:ring-4 focus:ring-indigo-100"
+                    placeholder="Ej: Logo Final"
+                    value={newDesign.title}
+                    onChange={(e) => setNewDesign({ ...newDesign, title: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              <div className="border-4 border-dashed border-slate-100 rounded-[2.5rem] p-10 text-center hover:bg-slate-50 cursor-pointer relative">
+                {newDesign.previewUrl ? (
+                  <img src={newDesign.previewUrl} className="w-32 h-32 object-cover rounded-[2rem] mx-auto shadow-xl" />
+                ) : (
+                  <label className="cursor-pointer block">
+                    <div className="bg-indigo-600 w-16 h-16 rounded-[1.5rem] flex items-center justify-center mx-auto mb-4 shadow-xl shadow-indigo-100">
+                      <ImageIcon className="text-white" size={32} />
+                    </div>
+                    <span className="font-black text-slate-900 text-lg">Subir Archivo</span>
+                    <input type="file" className="hidden" accept="image/*" onChange={handleFileChange} />
+                  </label>
+                )}
+              </div>
+
+              <button
+                type="submit"
+                className="w-full bg-indigo-600 text-white py-5 rounded-[2rem] font-black text-lg shadow-2xl shadow-indigo-200 hover:bg-indigo-700 flex items-center justify-center gap-3"
+              >
+                Confirmar y Notificar
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
