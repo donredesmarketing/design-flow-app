@@ -3,17 +3,17 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
+  root: '.', 
   base: './',
   resolve: {
     alias: {
-      '@': '/src',
+      src: '/src',
     },
   },
   build: {
     outDir: 'dist',
-    assetsDir: 'assets',
     rollupOptions: {
-      input: 'index.html'
-    }
-  }
+      input: 'index.html',
+    },
+  },
 })
