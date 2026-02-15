@@ -4,11 +4,16 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>DesignFlow</title>
+    <!-- Cargamos Tailwind desde CDN para asegurar que los estilos se vean incluso si falla el build local -->
     <script src="[https://cdn.tailwindcss.com](https://cdn.tailwindcss.com)"></script>
+    <style>
+      /* Evita el destello de contenido sin estilo */
+      [react-cloak] { display: none; }
+    </style>
   </head>
-  <body>
+  <body className="bg-slate-50">
     <div id="root"></div>
-    <!-- Ruta directa al archivo en la raíz -->
+    <!-- Punto de entrada principal -->
     <script type="module" src="./main.jsx"></script>
   </body>
 </html>
