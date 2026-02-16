@@ -1,52 +1,44 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Upload, CheckCircle, XCircle, MessageSquare, Image as ImageIcon, 
   Trash2, User, Palette, Clock, Download, LogOut, Mail, Archive, 
   Inbox, Bell, Users, Plus, Edit, Settings, HardDrive
 } from 'lucide-react';
 
-// --- CONFIGURACIÓN DE CORREO ---
+// Importaciones de Firebase
+import { initializeApp } from 'firebase/app';
+import { 
+  getAuth, 
+  signInWithCustomToken, 
+  signInAnonymously, 
+  onAuthStateChanged 
+} from 'firebase/auth';
+import { 
+  getFirestore, 
+  collection, 
+  doc, 
+  setDoc, 
+  addDoc, 
+  updateDoc, 
+  deleteDoc, 
+  onSnapshot, 
+  query 
+} from 'firebase/firestore';
+
+// --- CONFIGURACIÓN DE FIREBASE (PROPORCIONADA POR EL ENTORNO) ---
+const firebaseConfig = JSON.parse(__firebase_config);
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
 const ADMIN_MASTER_EMAIL = "donredesmarketing@gmail.com";
 const EMAIL_API_URL = "send_email.php"; 
 
-const INITIAL_USERS = [
-  { 
-    id: 1, 
-    name: "Don Redes Admin", 
-    company: "Don Redes Marketing", 
-    email: ADMIN_MASTER_EMAIL, 
-    password: "****", 
-    role: "designer" 
-  },
-  { 
-    id: 2, 
-    name: "Cliente de Prueba", 
-    company: "Empresa Global", 
-    email: "cliente@prueba.com", 
-    password: "****", 
-    role: "client" 
-  }
-];
-
-const INITIAL_DESIGNS = [
-  {
-    id: 1,
-    title: "Branding Corporativo V1",
-    description: "Propuesta de identidad visual para revisión inicial.",
-    status: "pending", 
-    imageUrl: "https://images.unsplash.com/photo-1626785774573-4b7993125651?auto=format&fit=crop&q=80&w=800",
-    date: new Date().toLocaleDateString(),
-    feedback: "",
-    fileName: "branding_v1.png",
-    fileSize: 8.4,
-    clientEmail: "cliente@prueba.com",
-    isArchived: false
-  }
-];
-
 export default function App() {
-  const [designs, setDesigns] = useState(INITIAL_DESIGNS);
-  const [users, setUsers] = useState(INITIAL_USERS);
+  const [user, setUser] = useState(null);
+  const [designs, setDesigns] = useState([]);
+  const [users, setUsers] = useState([]);
   const [viewMode, setViewMode] = useState('designer'); 
   const [designerTab, setDesignerTab] = useState('active'); 
   const [notificationLog, setNotificationLog] = useState([]);
@@ -61,6 +53,51 @@ export default function App() {
   const [newDesign, setNewDesign] = useState({ title: '', description: '', clientEmail: '', file: null, previewUrl: null });
   const [userForm, setUserForm] = useState({ name: '', company: '', email: '', password: '', role: 'client' });
 
+  // 1. Efecto para manejar la autenticación
+  useEffect(() => {
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (error) {
+        console.error("Auth error:", error);
+      }
+    };
+
+    initAuth();
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // 2. Efecto para sincronizar datos desde Firestore
+  useEffect(() => {
+    if (!user) return;
+
+    // Sincronizar Diseños (Públicos dentro del AppId para colaboración)
+    const designsRef = collection(db, 'artifacts', appId, 'public', 'data', 'designs');
+    const unsubscribeDesigns = onSnapshot(designsRef, (snapshot) => {
+      const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setDesigns(docs);
+    }, (error) => console.error("Firestore Designs error:", error));
+
+    // Sincronizar Usuarios
+    const usersRef = collection(db, 'artifacts', appId, 'public', 'data', 'users');
+    const unsubscribeUsers = onSnapshot(usersRef, (snapshot) => {
+      const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setUsers(docs);
+    }, (error) => console.error("Firestore Users error:", error));
+
+    return () => {
+      unsubscribeDesigns();
+      unsubscribeUsers();
+    };
+  }, [user]);
+
   // Gestión de espacio (Simulación de 15GB de Drive)
   const STORAGE_LIMIT = 15000; 
   const usedStorage = useMemo(() => designs.reduce((acc, curr) => acc + (curr.fileSize || 0), 0), [designs]);
@@ -68,25 +105,44 @@ export default function App() {
 
   const filteredDesigns = useMemo(() => {
     if (viewMode === 'designer') return designs.filter(d => designerTab === 'archived' ? d.isArchived : !d.isArchived);
-    if (viewMode === 'client' && clientSession) return designs.filter(d => d.clientEmail.toLowerCase().trim() === clientSession.toLowerCase().trim() && !d.isArchived);
+    if (viewMode === 'client' && clientSession) return designs.filter(d => d.clientEmail?.toLowerCase().trim() === clientSession.toLowerCase().trim() && !d.isArchived);
     return [];
   }, [designs, viewMode, clientSession, designerTab]);
 
-  const handleUserSubmit = (e) => {
+  // --- HANDLERS CON FIRESTORE ---
+
+  const handleUserSubmit = async (e) => {
     e.preventDefault();
-    if (editingUser) {
-      setUsers(users.map(u => u.id === editingUser.id ? { ...userForm, id: u.id } : u));
-    } else {
-      setUsers([...users, { ...userForm, id: Date.now() }]);
+    if (!user) return;
+    
+    const usersRef = collection(db, 'artifacts', appId, 'public', 'data', 'users');
+    try {
+      if (editingUser) {
+        await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', editingUser.id), {
+          ...userForm
+        });
+      } else {
+        await addDoc(usersRef, {
+          ...userForm,
+          createdAt: new Date().toISOString()
+        });
+      }
+      setIsUserModalOpen(false);
+      setEditingUser(null);
+      setUserForm({ name: '', company: '', email: '', password: '', role: 'client' });
+    } catch (error) {
+      console.error("Error saving user:", error);
     }
-    setIsUserModalOpen(false);
-    setEditingUser(null);
-    setUserForm({ name: '', company: '', email: '', password: '', role: 'client' });
   };
 
-  const deleteUser = (id) => {
+  const deleteUser = async (id) => {
+    if (!user) return;
     if (window.confirm("¿Seguro que deseas eliminar este usuario?")) {
-      setUsers(users.filter(u => u.id !== id));
+      try {
+        await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', id));
+      } catch (error) {
+        console.error("Error deleting user:", error);
+      }
     }
   };
 
@@ -109,35 +165,57 @@ export default function App() {
         })
       });
     } catch (e) {
-      console.warn("Simulación de envío: Backend PHP no alcanzado.");
+      console.warn("Backend PHP no alcanzado localmente.");
     }
   };
 
-  const handleSubmitDesign = (e) => {
+  const handleSubmitDesign = async (e) => {
     e.preventDefault();
-    const newEntry = {
-      id: Date.now(),
-      ...newDesign,
+    if (!user) return;
+
+    const designsRef = collection(db, 'artifacts', appId, 'public', 'data', 'designs');
+    const designData = {
+      title: newDesign.title,
+      description: newDesign.description,
+      clientEmail: newDesign.clientEmail,
       status: 'pending',
       imageUrl: newDesign.previewUrl || "https://images.unsplash.com/photo-1557683316-973673baf926",
       date: new Date().toLocaleDateString(),
       feedback: "",
       isArchived: false,
-      fileSize: 15.5
+      fileSize: 15.5,
+      createdAt: new Date().toISOString()
     };
-    setDesigns([newEntry, ...designs]);
-    sendNotification(newEntry, "new");
-    setIsUploadModalOpen(false);
-    setNewDesign({ title: '', description: '', clientEmail: '', file: null, previewUrl: null });
+
+    try {
+      const docRef = await addDoc(designsRef, designData);
+      sendNotification({ ...designData, id: docRef.id }, "new");
+      setIsUploadModalOpen(false);
+      setNewDesign({ title: '', description: '', clientEmail: '', file: null, previewUrl: null });
+    } catch (error) {
+      console.error("Error adding design:", error);
+    }
   };
 
-  const handleUpdateStatus = (id, newStatus) => {
+  const handleUpdateStatus = async (id, newStatus) => {
+    if (!user) return;
+    const designRef = doc(db, 'artifacts', appId, 'public', 'data', 'designs', id);
     const design = designs.find(d => d.id === id);
-    setDesigns(designs.map(d => d.id === id ? { ...d, status: newStatus, feedback: feedbackText } : d));
-    sendNotification(design, newStatus);
-    setActiveFeedbackId(null);
-    setFeedbackText("");
+
+    try {
+      await updateDoc(designRef, {
+        status: newStatus,
+        feedback: feedbackText
+      });
+      sendNotification(design, newStatus);
+      setActiveFeedbackId(null);
+      setFeedbackText("");
+    } catch (error) {
+      console.error("Error updating status:", error);
+    }
   };
+
+  // --- RENDERIZADO ---
 
   if (viewMode === 'client' && !clientSession) {
     return (
@@ -199,87 +277,93 @@ export default function App() {
           )}
 
           <main className="flex-1">
-            {designerTab === 'users' && viewMode === 'designer' ? (
-              <div className="space-y-8 animate-in fade-in duration-500">
-                <div className="flex justify-between items-end">
-                  <div><h2 className="text-3xl font-black tracking-tight">Gestión de Usuarios</h2><p className="text-slate-500">Miembros del equipo y clientes externos.</p></div>
-                  <button onClick={() => { setEditingUser(null); setUserForm({ name: '', company: '', email: '', password: '', role: 'client' }); setIsUserModalOpen(true); }} className="bg-slate-900 text-white px-7 py-3.5 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-slate-800 shadow-xl transition-all flex items-center gap-2"><Plus size={18} /> Crear Usuario</button>
-                </div>
-                <div className="bg-white rounded-[2.5rem] border border-slate-200 overflow-hidden shadow-sm">
-                  <table className="w-full text-left">
-                    <thead>
-                      <tr className="bg-slate-50/50 border-b border-slate-100 text-[10px] font-black uppercase text-slate-400 tracking-[0.15em]">
-                        <th className="px-8 py-6">Usuario / Empresa</th>
-                        <th className="px-8 py-6">Email</th>
-                        <th className="px-8 py-6">Rol</th>
-                        <th className="px-8 py-6 text-right">Acciones</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-50">
-                      {users.map(u => (
-                        <tr key={u.id} className="hover:bg-slate-50/30 transition-colors">
-                          <td className="px-8 py-6">
-                            <div className="flex items-center gap-4">
-                              <div className={`w-11 h-11 rounded-2xl flex items-center justify-center font-black ${u.role === 'designer' ? 'bg-indigo-100 text-indigo-600' : 'bg-slate-100 text-slate-500'}`}>{u.name.charAt(0)}</div>
-                              <div><p className="font-bold text-slate-900 leading-tight">{u.name}</p><p className="text-[11px] text-slate-400 font-bold uppercase tracking-tight">{u.company}</p></div>
-                            </div>
-                          </td>
-                          <td className="px-8 py-6 text-sm font-semibold text-slate-600">{u.email}</td>
-                          <td className="px-8 py-6"><span className={`px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest ${u.role === 'designer' ? 'bg-indigo-50 text-indigo-600 border border-indigo-100' : 'bg-slate-50 text-slate-500 border border-slate-200'}`}>{u.role === 'designer' ? 'Admin' : 'Cliente'}</span></td>
-                          <td className="px-8 py-6 text-right">
-                            <div className="flex justify-end gap-2">
-                              <button onClick={() => { setEditingUser(u); setUserForm(u); setIsUserModalOpen(true); }} className="p-2.5 text-slate-400 hover:text-indigo-600 bg-slate-50 rounded-xl transition-all"><Edit size={18} /></button>
-                              <button onClick={() => deleteUser(u.id)} className="p-2.5 text-slate-400 hover:text-red-500 bg-slate-50 rounded-xl transition-all"><Trash2 size={18} /></button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
+            {!user ? (
+               <div className="flex items-center justify-center h-64 text-slate-400 font-bold">Iniciando conexión segura...</div>
             ) : (
-              <div className="space-y-8 animate-in fade-in duration-500">
-                <header>
-                  <h1 className="text-4xl font-black tracking-tight">{viewMode === 'designer' ? (designerTab === 'active' ? 'Entregas Activas' : 'Archivo Histórico') : 'Mis Propuestas'}</h1>
-                  <p className="text-slate-500 mt-1 font-medium">{viewMode === 'designer' ? 'Seguimiento de proyectos y feedback de Don Redes.' : `Hola ${clientSession}, aquí tienes tus diseños pendientes.`}</p>
-                </header>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
-                  {filteredDesigns.map(design => (
-                    <div key={design.id} className="bg-white rounded-[3rem] border border-slate-200 overflow-hidden shadow-sm hover:shadow-2xl transition-all duration-500 flex flex-col group">
-                      <div className="relative aspect-[16/10] bg-slate-100 overflow-hidden">
-                        <img src={design.imageUrl} alt={design.title} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-1000" />
-                        <div className="absolute top-6 right-6"><span className={`px-5 py-2 rounded-full text-[10px] font-black uppercase tracking-[0.1em] shadow-xl ${design.status === 'approved' ? 'bg-green-500 text-white' : design.status === 'rejected' ? 'bg-red-500 text-white' : 'bg-amber-400 text-white'}`}>{design.status}</span></div>
-                      </div>
-                      <div className="p-10 flex-1 flex flex-col">
-                        <h3 className="text-2xl font-black mb-1">{design.title}</h3>
-                        <div className="flex items-center gap-2 text-xs font-bold text-slate-400 mb-6 tracking-tight"><Mail size={14} className="text-indigo-400" /> {design.clientEmail}</div>
-                        <p className="text-slate-500 text-sm leading-relaxed mb-8 line-clamp-3 font-medium">{design.description}</p>
-                        {design.feedback && <div className="mb-8 p-5 bg-indigo-50 rounded-[2rem] border border-indigo-100 italic text-xs text-indigo-900 font-bold leading-relaxed shadow-inner">"{design.feedback}"</div>}
-                        {viewMode === 'client' && design.status === 'pending' && (
-                          <div className="mt-auto pt-8 border-t border-slate-100 flex gap-4">
-                            <button onClick={() => { setFeedbackText("¡Diseño aprobado! Excelente trabajo."); handleUpdateStatus(design.id, 'approved'); }} className="flex-1 bg-green-500 text-white py-4 rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl shadow-green-100 transition-all hover:bg-green-600 active:scale-95">Aprobar</button>
-                            <button onClick={() => setActiveFeedbackId(design.id)} className="flex-1 bg-white border-2 border-slate-200 text-slate-600 py-4 rounded-2xl font-black text-xs uppercase tracking-widest hover:border-red-200 hover:text-red-500 transition-all">Rechazar</button>
+              <>
+                {designerTab === 'users' && viewMode === 'designer' ? (
+                  <div className="space-y-8 animate-in fade-in duration-500">
+                    <div className="flex justify-between items-end">
+                      <div><h2 className="text-3xl font-black tracking-tight">Gestión de Usuarios</h2><p className="text-slate-500">Miembros del equipo y clientes externos.</p></div>
+                      <button onClick={() => { setEditingUser(null); setUserForm({ name: '', company: '', email: '', password: '', role: 'client' }); setIsUserModalOpen(true); }} className="bg-slate-900 text-white px-7 py-3.5 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-slate-800 shadow-xl transition-all flex items-center gap-2"><Plus size={18} /> Crear Usuario</button>
+                    </div>
+                    <div className="bg-white rounded-[2.5rem] border border-slate-200 overflow-hidden shadow-sm">
+                      <table className="w-full text-left">
+                        <thead>
+                          <tr className="bg-slate-50/50 border-b border-slate-100 text-[10px] font-black uppercase text-slate-400 tracking-[0.15em]">
+                            <th className="px-8 py-6">Usuario / Empresa</th>
+                            <th className="px-8 py-6">Email</th>
+                            <th className="px-8 py-6">Rol</th>
+                            <th className="px-8 py-6 text-right">Acciones</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-50">
+                          {users.map(u => (
+                            <tr key={u.id} className="hover:bg-slate-50/30 transition-colors">
+                              <td className="px-8 py-6">
+                                <div className="flex items-center gap-4">
+                                  <div className={`w-11 h-11 rounded-2xl flex items-center justify-center font-black ${u.role === 'designer' ? 'bg-indigo-100 text-indigo-600' : 'bg-slate-100 text-slate-500'}`}>{u.name?.charAt(0)}</div>
+                                  <div><p className="font-bold text-slate-900 leading-tight">{u.name}</p><p className="text-[11px] text-slate-400 font-bold uppercase tracking-tight">{u.company}</p></div>
+                                </div>
+                              </td>
+                              <td className="px-8 py-6 text-sm font-semibold text-slate-600">{u.email}</td>
+                              <td className="px-8 py-6"><span className={`px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest ${u.role === 'designer' ? 'bg-indigo-50 text-indigo-600 border border-indigo-100' : 'bg-slate-50 text-slate-500 border border-slate-200'}`}>{u.role === 'designer' ? 'Admin' : 'Cliente'}</span></td>
+                              <td className="px-8 py-6 text-right">
+                                <div className="flex justify-end gap-2">
+                                  <button onClick={() => { setEditingUser(u); setUserForm(u); setIsUserModalOpen(true); }} className="p-2.5 text-slate-400 hover:text-indigo-600 bg-slate-50 rounded-xl transition-all"><Edit size={18} /></button>
+                                  <button onClick={() => deleteUser(u.id)} className="p-2.5 text-slate-400 hover:text-red-500 bg-slate-50 rounded-xl transition-all"><Trash2 size={18} /></button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-8 animate-in fade-in duration-500">
+                    <header>
+                      <h1 className="text-4xl font-black tracking-tight">{viewMode === 'designer' ? (designerTab === 'active' ? 'Entregas Activas' : 'Archivo Histórico') : 'Mis Propuestas'}</h1>
+                      <p className="text-slate-500 mt-1 font-medium">{viewMode === 'designer' ? 'Seguimiento de proyectos y feedback de Don Redes.' : `Hola ${clientSession}, aquí tienes tus diseños pendientes.`}</p>
+                    </header>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
+                      {filteredDesigns.map(design => (
+                        <div key={design.id} className="bg-white rounded-[3rem] border border-slate-200 overflow-hidden shadow-sm hover:shadow-2xl transition-all duration-500 flex flex-col group">
+                          <div className="relative aspect-[16/10] bg-slate-100 overflow-hidden">
+                            <img src={design.imageUrl} alt={design.title} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-1000" />
+                            <div className="absolute top-6 right-6"><span className={`px-5 py-2 rounded-full text-[10px] font-black uppercase tracking-[0.1em] shadow-xl ${design.status === 'approved' ? 'bg-green-500 text-white' : design.status === 'rejected' ? 'bg-red-500 text-white' : 'bg-amber-400 text-white'}`}>{design.status}</span></div>
                           </div>
-                        )}
-                        {activeFeedbackId === design.id && (
-                          <div className="mt-4 animate-in slide-in-from-top-4">
-                            <textarea className="w-full p-5 bg-slate-50 rounded-[1.5rem] text-sm border-2 border-slate-100 outline-none focus:ring-2 focus:ring-red-500 transition-all mb-3 resize-none font-medium" rows="3" placeholder="Describe los cambios solicitados..." value={feedbackText} onChange={(e) => setFeedbackText(e.target.value)} />
-                            <div className="flex gap-2">
-                                <button onClick={() => handleUpdateStatus(design.id, 'rejected')} className="flex-1 bg-red-500 text-white py-4 rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg shadow-red-100">Enviar Feedback</button>
-                                <button onClick={() => setActiveFeedbackId(null)} className="px-5 py-4 bg-slate-100 text-slate-400 rounded-2xl font-bold">X</button>
+                          <div className="p-10 flex-1 flex flex-col">
+                            <h3 className="text-2xl font-black mb-1">{design.title}</h3>
+                            <div className="flex items-center gap-2 text-xs font-bold text-slate-400 mb-6 tracking-tight"><Mail size={14} className="text-indigo-400" /> {design.clientEmail}</div>
+                            <p className="text-slate-500 text-sm leading-relaxed mb-8 line-clamp-3 font-medium">{design.description}</p>
+                            {design.feedback && <div className="mb-8 p-5 bg-indigo-50 rounded-[2rem] border border-indigo-100 italic text-xs text-indigo-900 font-bold leading-relaxed shadow-inner">"{design.feedback}"</div>}
+                            {viewMode === 'client' && design.status === 'pending' && (
+                              <div className="mt-auto pt-8 border-t border-slate-100 flex gap-4">
+                                <button onClick={() => { setFeedbackText("¡Diseño aprobado! Excelente trabajo."); handleUpdateStatus(design.id, 'approved'); }} className="flex-1 bg-green-500 text-white py-4 rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl shadow-green-100 transition-all hover:bg-green-600 active:scale-95">Aprobar</button>
+                                <button onClick={() => setActiveFeedbackId(design.id)} className="flex-1 bg-white border-2 border-slate-200 text-slate-600 py-4 rounded-2xl font-black text-xs uppercase tracking-widest hover:border-red-200 hover:text-red-500 transition-all">Rechazar</button>
+                              </div>
+                            )}
+                            {activeFeedbackId === design.id && (
+                              <div className="mt-4 animate-in slide-in-from-top-4">
+                                <textarea className="w-full p-5 bg-slate-50 rounded-[1.5rem] text-sm border-2 border-slate-100 outline-none focus:ring-2 focus:ring-red-500 transition-all mb-3 resize-none font-medium" rows="3" placeholder="Describe los cambios solicitados..." value={feedbackText} onChange={(e) => setFeedbackText(e.target.value)} />
+                                <div className="flex gap-2">
+                                    <button onClick={() => handleUpdateStatus(design.id, 'rejected')} className="flex-1 bg-red-500 text-white py-4 rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg shadow-red-100">Enviar Feedback</button>
+                                    <button onClick={() => setActiveFeedbackId(null)} className="px-5 py-4 bg-slate-100 text-slate-400 rounded-2xl font-bold">X</button>
+                                </div>
+                              </div>
+                            )}
+                            <div className="mt-auto pt-6 flex justify-between items-center text-[10px] font-black uppercase text-slate-400 tracking-widest">
+                              <span className="flex items-center gap-1.5"><Clock size={12} /> {design.date}</span>
+                              <span className="bg-slate-100 px-3 py-1.5 rounded-lg flex items-center gap-1.5"><Download size={12} /> {design.fileSize} MB</span>
                             </div>
                           </div>
-                        )}
-                        <div className="mt-auto pt-6 flex justify-between items-center text-[10px] font-black uppercase text-slate-400 tracking-widest">
-                          <span className="flex items-center gap-1.5"><Clock size={12} /> {design.date}</span>
-                          <span className="bg-slate-100 px-3 py-1.5 rounded-lg flex items-center gap-1.5"><Download size={12} /> {design.fileSize} MB</span>
                         </div>
-                      </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-              </div>
+                  </div>
+                )}
+              </>
             )}
           </main>
         </div>
